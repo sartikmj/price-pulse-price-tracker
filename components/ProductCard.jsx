@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import Link from "next/link";
+import PriceChart from "./PriceChart";
 
 const ProductCard = ({ product }) => {
   const [showChart, setShowChart] = useState(false);
