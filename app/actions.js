@@ -1,5 +1,6 @@
 "use server"
 
+import { sendPriceDropAlert } from "@/lib/email";
 import { scrapeProduct } from "@/lib/firecrawl";
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
@@ -50,6 +51,7 @@ export async function addProduct(formData) {
             .single()
 
         const isUpdate = !!existingProduct;
+        const oldPrice = isUpdate ? parseFloat(existingProduct.current_price) : null;
 
         // Upsert Product (insert or update based on user_id + url)
         const { data: product, error } = await supabase
@@ -84,6 +86,15 @@ export async function addProduct(formData) {
                 price: newPrice,
                 currency: currency,
             });
+        }
+
+        if (isUpdate && oldPrice !== null && newPrice < oldPrice && user.email) {
+            await sendPriceDropAlert(
+                user.email,
+                product,
+                oldPrice,
+                newPrice
+            );
         }
 
         revalidatePath("/");

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
 import { scrapeProduct } from "@/lib/firecrawl";
 import { sendPriceDropAlert } from "@/lib/email";
 
@@ -46,47 +47,50 @@ export async function POST(request) {
         const newPrice = parseFloat(productData.currentPrice);
         const oldPrice = parseFloat(product.current_price);
 
-        await supabase
+        const updatedProduct = {
+          ...product,
+          current_price: newPrice,
+          currency: productData.currencyCode || product.currency,
+          name: productData.productName || product.name,
+          image_url: productData.productImageUrl || product.image_url,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error: updateError } = await supabase
           .from("products")
-          .update({
-            current_price: newPrice,
-            currency: productData.currencyCode || product.currency,
-            name: productData.productName || product.name,
-            image_url: productData.productImageUrl || product.image_url,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updatedProduct)
           .eq("id", product.id);
 
+        if (updateError) throw updateError;
+
         if (oldPrice !== newPrice) {
-          await supabase.from("price_history").insert({
+          const { error: historyError } = await supabase.from("price_history").insert({
             product_id: product.id,
             price: newPrice,
             currency: productData.currencyCode || product.currency,
           });
 
+          if (historyError) throw historyError;
+
           results.priceChanges++;
 
           if (newPrice < oldPrice) {
-
-            // Alert user of price drop via email
-
             const {
               data: { user },
             } = await supabase.auth.admin.getUserById(product.user_id);
 
             if (user?.email) {
-
-            // Send email alert for price drop
-
               const emailResult = await sendPriceDropAlert(
                 user.email,
-                product,
+                updatedProduct,
                 oldPrice,
                 newPrice
               );
 
               if (emailResult.success) {
                 results.alertsSent++;
+              } else {
+                console.error(`Failed to send price drop email for product ${product.id}:`, emailResult.error);
               }
             }
           }
@@ -98,6 +102,8 @@ export async function POST(request) {
         results.failed++;
       }
     }
+
+    revalidatePath("/");
 
     return NextResponse.json({
       success: true,
@@ -115,5 +121,3 @@ export async function GET() {
     message: "Price check endpoint is working. Use POST to trigger.",
   });
 }
-
-// curl.exe -X POST https://bestdealdrop.vercel.app/api/cron/check-prices -H "Authorization: Bearer d83dc2f93909a45cd7d4f99b0632ba0361a51c32fa9f7ac1ff081c95c764e532"
